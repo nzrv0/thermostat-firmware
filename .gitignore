@@ -1,0 +1,11 @@
+# Build output
+firmware/build/
+firmware/tests/build-host/
+build/
+
+# Toolchain (147 MB, fetched separately)
+toolchains/
+
+# Editor / OS
+*.swp
+.DS_Store
