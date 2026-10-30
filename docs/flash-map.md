@@ -72,15 +72,25 @@ Default IRQ handler is `0x08005B37`; 13 slots have bespoke handlers:
 | 28 | `0x08063960` | 52 | `0x080650C8` |
 | 29 | `0x08063964` | 53 | `0x08065120` |
 
-Decoded behaviour at these sites:
+Decoded behaviour at these sites (the handlers are thin stubs; the
+peripheral each one drives was recovered with `tools/analyze.py`):
 
-- **IRQ 37** reads and writes `USART1` (`0x40013800`) — the ESP-07S modem UART.
-- **IRQ 52** reads and writes `UART4` (`0x40004C00`).
-- **IRQ 28 / 29** both test a byte at `0x20002248 + 0x29D` against `0x53` ('S')
-  and dispatch to a timer path, otherwise fall through to a shared handler.
-- **IRQ 50** calls `0x080638E4` then reads `0x20001E0E`.
-- **IRQ 12–15** are four consecutive 2-byte `bx lr` stubs — a shared
-  dispatcher entry point per peripheral line.
+| IRQ | Vector | Handler | Peripheral [F] | Behaviour |
+|---|---|---|---|---|
+| 12–15 | `0x0803449C`–`0x080344A2` | — | — | four `bx lr` stubs: shared dispatcher entries |
+| 20 | `0x08065384` | `0x080653E4` | USB/CAN block (`0x40005C44`) | reads a peripheral pointer, writes a halfword |
+| 23 | `0x0803E4FC` | `0x08064F48` | peripheral status | reads a status byte with mask `0x80` (`0x0806FEC4`) |
+| 28 | `0x08063960` | — | — | empty `bx lr` stub |
+| 29 | `0x08063964` | — | state block `0x20002248` | tests the byte at +`0x29D` for `'S'` (`0x53`), then calls `0x080626E8` |
+| 37 | `0x080652FC` | `0x080828C4` | **USART1** (`0x40013800`) | the ESP-07S modem byte path, 32-byte reads |
+| 39 | `0x08065368` | — | state block `0x20002248` | also touches `0x20000224` / `0x20000226` |
+| 50 | `0x08063980` | `0x080638E4` | **TIM5** (`0x40000C00`), RCC | timer interrupt |
+| 52 | `0x080650C8` | `0x080816E8` | **UART4** (`0x40004C00`) | 32-byte reads |
+| 53 | `0x08065120` | `0x080651D4` | **UART5** (`0x40005000`), GPIOC, GPIOD | 32-byte reads plus two port lines |
+
+IRQ 37 is the ESP-07S modem (the AT command path) and IRQ 52/53 are
+UART4/UART5, which carry the Modbus RTU 485 line and the LoRa modem.
+
 
 ## Startup code
 

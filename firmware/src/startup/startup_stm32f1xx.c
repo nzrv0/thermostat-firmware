@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include "stm32f1xx.h"
+#include "scheduler.h"
 
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss, _estack;
 extern int main(void);
@@ -150,12 +151,20 @@ void Default_Handler(void)
 
 void SysTick_Handler(void)
 {
-    /* Wired up by the scheduler in a later phase. */
+    scheduler_tick(scheduler_system());
 }
 
 void Reset_Handler(void)
 {
     uint32_t *src, *dst;
+
+    /* Enable CP10/CP11 before anything else: the build uses hard float
+     * (AAPCS-VFP), matching the shipped image, so the FPU must be
+     * accessible before the first call into C. The original references the
+     * CPACR address (0xE000ED88) once, at 0x080638D0. */
+    SCB->CPACR |= SCB_CPACR_CP10_CP11_FULL;
+    __asm volatile ("dsb");
+    __asm volatile ("isb");
 
     SystemInit();
 

@@ -15,6 +15,17 @@
  * opacity: 0 is fully transparent, 255 fully opaque, and intermediate
  * values blend (the set contains anti-aliased edges, so a hard
  * transparency test would leave visible fringes).
+ *
+ * Two entry points exist:
+ *
+ *   bmp_draw()        - the whole image is already in memory.
+ *   bmp_draw_stream() - the image is read incrementally.
+ *
+ * The streaming form matters on the device: the assets live on the
+ * external NOR behind the FSMC, and the largest glyph (nb0.bmp, 117x177
+ * at 32bpp) is 82,836 bytes, which does not fit in the 96 KiB SRAM
+ * alongside the rest of the system. The streaming blitter therefore
+ * fetches one row at a time.
  */
 
 #ifndef BMP_H
@@ -36,9 +47,23 @@ typedef struct
 /* Parse a BMP header held in memory. Returns 0 on success. */
 int bmp_parse(const uint8_t *data, uint32_t len, bmp_info_t *out);
 
+/* Parse only the header. The pixel data is not checked for presence, so
+ * this can be used on a short buffer that holds just the header. */
+int bmp_parse_header(const uint8_t *data, uint32_t len, bmp_info_t *out);
+
 /* Draw a BMP into the framebuffer at (x, y). Pixels outside the
  * framebuffer are clipped. Returns 0 on success. */
 int bmp_draw(const uint8_t *data, uint32_t len, framebuffer_t *fb,
              int32_t x, int32_t y);
+
+/* Incremental BMP source: reads `len` bytes at `offset` from the image.
+ * Returns 0 on success. */
+typedef int (*bmp_read_fn)(void *ctx, uint32_t offset, uint8_t *out,
+                           uint32_t len);
+
+/* Draw a BMP that is read incrementally, one row at a time. `size` is
+ * the total image length in bytes. Returns 0 on success. */
+int bmp_draw_stream(bmp_read_fn read, void *ctx, uint32_t size,
+                    framebuffer_t *fb, int32_t x, int32_t y);
 
 #endif /* BMP_H */

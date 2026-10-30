@@ -1,27 +1,29 @@
 /*
  * stm32f1xx.h - bare register definitions for the Falcon HP thermostat MCU.
  *
- * The shipped firmware addresses peripherals using the STM32F1xx memory map
+ * The MCU is an Artery AT32F421: ARMv7-M Cortex-M4 with a hardware FPU.
+ * The shipped firmware executes ~780 VFP instructions (vmov/vcvt/vstr/vmul/
+ * vdiv/vcmp), which a Cortex-M3 cannot run at all, and the ADC it uses
+ * sits at the AT32 address 0x40013C00 rather than the STM32F1 ADC1
+ * address 0x40012400. The rest of the peripheral map is STM32F1-compatible
  * (RCC 0x40021000, FLASH 0x40022000, GPIOA 0x40010800 .. GPIOG 0x40012000,
- * FSMC 0xA0000000, USB 0x40005C00). The PCB carries an Artery AT32F4xx part,
- * whose peripheral map is F1-compatible, so the same addresses are correct on
- * both an ST STM32F103 and the Artery part. Everything here is written
- * against those addresses directly - no vendor SPL/HAL is required.
+ * FSMC 0xA0000000, USB 0x40005C00). Everything here is written against
+ * those addresses directly - no vendor SPL/HAL is required.
  *
  * Only peripherals actually referenced by the shipped image are declared.
- * Verified present in the image (literal-pool resolved counts in brackets):
+ * Verified present in the image (literal-pool resolved counts in brackets,
+ * from tools/analyze.py):
  *
- *   GPIOA [190]  GPIOB [150]  GPIOC [47]  GPIOD [5]  GPIOE [1]
- *   GPIOF [9]    GPIOG [33]   RCC [99]    FLASH [41]  AFIO [15]
- *   EXTI [12]    DMA1 [4]     IWDG [7]    PWR [2]    RTC [11]
- *   TIM3 [23]    TIM5 [6]     TIM8 [10]   TIM9-11 [12]
- *   SPI1 [47]    SPI3 [20]    USART1 [25] USART2 [1]  USART3 [38]
- *   UART4 [17]   UART5 [51]   USB [47]    FSMC [4]
+ *   GPIOA [28]  GPIOB [32]  GPIOC [17]  GPIOD [4]  GPIOE [1]
+ *   GPIOF [5]   GPIOG [11]  RCC [10]     FLASH [7]  AFIO [2]
+ *   EXTI [2]    DMA1 [1]    DMA2 [4]     IWDG [1]   PWR [1]
+ *   ADC [2] (AT32 address 0x40013C00)   TIM3 [7]  TIM5 [2]
+ *   SPI1 [2]    SPI3 [4]    USART1 [5]   USART2 [1] USART3 [12]
+ *   UART4 [5]   UART5 [12]  USB [28]     FSMC [2]
  *
- * Notably absent from the image: I2C1/I2C2, ADC1/ADC2-3, TIM1/TIM2/TIM4/
- * TIM6/TIM7, CAN, BKP, DAC, WWDG, CRC. The EEPROM, RTC, humidity and NTC
- * sensors are therefore reached over GPIO (bit-banged) or an external device,
- * not over a memory-mapped I2C/ADC block. See docs/hw-map.md.
+ * Notably absent from the image: I2C1/I2C2 (the EEPROM bus is bit-banged
+ * on GPIOG), the F1 ADC address, TIM1/TIM2/TIM4/TIM6/TIM7, CAN, BKP, DAC,
+ * WWDG, CRC. See docs/hw-map.md.
  */
 
 #ifndef STM32F1XX_H
@@ -32,7 +34,7 @@
 #define __IO volatile
 
 /* ------------------------------------------------------------------ */
-/* Cortex-M3 core                                                      */
+/* Cortex-M4 core                                                      */
 /* ------------------------------------------------------------------ */
 
 typedef struct
@@ -51,6 +53,8 @@ typedef struct
     __IO uint32_t MMFAR;
     __IO uint32_t BFAR;
     __IO uint32_t AFSR;
+    __IO uint32_t RESERVED0[8];
+    __IO uint32_t CPACR;
 } SCB_TypeDef;
 
 typedef struct
@@ -83,6 +87,15 @@ typedef struct
 #define SCB_AIRCR_VECTKEY_Pos     16UL
 #define SCB_AIRCR_VECTKEY_Msk     (0xFFFFUL << SCB_AIRCR_VECTKEY_Pos)
 #define SCB_AIRCR_SYSRESETREQ     (1UL << 2)
+
+/* CPACR (0xE000ED88) - coprocessor access control. The shipped image
+ * references this address once (0x080638D0); the reset path must give
+ * CP10/CP11 full access before any hard-float code runs. */
+#define SCB_CPACR_CP10_Pos        20UL
+#define SCB_CPACR_CP10_Msk        (0x3UL << SCB_CPACR_CP10_Pos)
+#define SCB_CPACR_CP11_Pos        22UL
+#define SCB_CPACR_CP11_Msk        (0x3UL << SCB_CPACR_CP11_Pos)
+#define SCB_CPACR_CP10_CP11_FULL  (0xFUL << 20)
 
 /* ------------------------------------------------------------------ */
 /* RCC - 0x40021000                                                    */
@@ -377,13 +390,33 @@ typedef struct
 
 typedef struct
 {
+    __IO uint32_t CCR;
+    __IO uint32_t CNDTR;
+    __IO uint32_t CPAR;
+    __IO uint32_t CMAR;
+    __IO uint32_t RESERVED;
+} DMA_Channel_TypeDef;
+
+#define DMA_CCR_EN     (1UL << 0)
+#define DMA_CCR_TCIE   (1UL << 1)
+#define DMA_CCR_TEIE   (1UL << 3)
+#define DMA_CCR_DIR    (1UL << 4)
+#define DMA_CCR_CIRC   (1UL << 5)
+#define DMA_CCR_MINC   (1UL << 7)
+#define DMA_CCR_PSIZE_Pos 11
+#define DMA_CCR_MSIZE_Pos 13
+#define DMA_CCR_PL      (1UL << 16)
+#define DMA_CCR_DBM     (1UL << 18)
+#define DMA_CCR_CT      (1UL << 19)
+
+typedef struct
+{
     __IO uint32_t ISR;
     __IO uint32_t IFCR;
     __IO uint32_t IPRR;
     __IO uint32_t APBR;
-    __IO uint32_t reserved0;
-    __IO uint32_t CPAR[7];
-    __IO uint32_t CMAR[7];
+    __IO uint32_t RESERVED0;
+    DMA_Channel_TypeDef CH[7];
 } DMA1_TypeDef;
 
 #define DMA1 ((DMA1_TypeDef *) 0x40020000UL)
@@ -482,6 +515,9 @@ typedef struct
 #define USB_ISTR_CTR      (1UL << 15)
 
 /* ------------------------------------------------------------------ */
+/* DMA1 - 0x40020000                                                  */
+/* ------------------------------------------------------------------ */
+
 /* FSMC - 0xA0000000 (external NOR: SST39VF1601)                      */
 /* ------------------------------------------------------------------ */
 

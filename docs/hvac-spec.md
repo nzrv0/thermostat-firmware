@@ -90,10 +90,13 @@ outputs. No hardware access, so it is host-testable.
 
 **Demand evaluation** (`hvac.c`, `evaluate_demand`):
 
-1. Mode `OFF`, or hold active, or holiday active → no demand.
+1. Mode `OFF`, or hold active, or holiday active → no demand, and no
+   output at all: a hold or a holiday switches the system off.
 2. Occupancy input inactive → no demand. (The firmware reports
    `Occupancy in open-circuit` / `Occupancy in short-circuit` errors at
    `0x080926A4`/`0x080926C0`, confirming the input gates the call.)
+   The occupancy input gates the **compressor call only**: the fan still
+   runs when a fan speed is asked for.
 3. Frost protect active → no demand.
 4. Heating demand when mode permits heat, equipment supports heat, and
    `room_temp < heat_setpoint - switch_difference`.
@@ -115,7 +118,14 @@ position when cooling, and must settle before the compressor contactor
 closes (`VALVE_SWITCH_SECONDS`).
 
 **Fan.** Follows the compressor, or runs on request when the fan mode is
-Low/Med/High. In `Fan`/`Ventilate` modes the fan runs with no compressor.
+Low/Med/High. In `Fan`/`Ventilate` modes the fan runs with no compressor
+— the mode itself is the request, so it runs whatever the fan speed
+says, and whatever the occupancy input says.
+
+**The equipment that can cool.** `1 Cool Stage` is a cooling-only
+configuration and does call for cooling. The differential harness
+caught this: the implementation's `equipment_has_cool()` was missing
+`HVAC_EQUIP_1_COOL_STAGE`, so that equipment type could never cool.
 
 **Defrost.** For heat-pump equipment, a periodic defrost (60 min) triggered
 when the outdoor sensor is below 5 °C; the compressor is suspended for its
@@ -158,6 +168,23 @@ timezone list (UTC+1 … UTC+8), and named zones (`ALASKA TIME`,
 `ntp.ubuntu.com` (`0x080929D4`–`0x08092A24`). DST is supported
 (`dst.bmp`).
 
+## The differential harness
+
+`firmware/tests/differential.c` compares the implementation against an
+independent transcription of the rules above, over a deterministic
+stimulus matrix:
+
+```
+modes (12) x equipment types (16) x room temperatures (9)
+x setpoint pairs (4) x occupancy (2) x hold (2) x scenarios (3)
+= 82,944 cases
+```
+
+The scenarios are *fresh* (the stage-1 soak has not elapsed), *soaked*
+(120 s of stage-1 running) and *defrosting*. Both models are driven
+with the same stimulus and their six relay outputs are diffed; a
+divergence prints the case so it can be reproduced.
+
 ## Host test coverage
 
 `firmware/tests/test_main.c` verifies:
@@ -170,5 +197,8 @@ timezone list (UTC+1 … UTC+8), and named zones (`ALASKA TIME`,
 - heat and cool are never both on
 - mode and equipment names match the firmware strings exactly
 
-The whole harness currently reports **43 checks, 0 failures** — the HVAC
-checks above plus framebuffer, BMP and asset-store coverage.
+The whole harness currently reports **326 checks, 0 failures** — the HVAC
+checks above plus the framebuffer, BMP and asset-store coverage, the
+digit rendering, the USB device, the panel, the two BACnet servers, the
+OTA client, the LoRaWAN payload, the time and humidity sources, the
+screen and touch layers, and the 82,944-case differential comparison.

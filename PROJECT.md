@@ -16,6 +16,8 @@ Companion documents — read these for the detail:
 | [`docs/assets.md`](docs/assets.md) | Icon set, BMP formats, NOR image |
 | [`docs/toolchain.md`](docs/toolchain.md) | Build system, test harness, analysis tooling |
 | [`docs/open-questions.md`](docs/open-questions.md) | 13 unresolved items |
+| [`docs/cloud-contract.md`](docs/cloud-contract.md) | The vendor's cloud contract |
+| [`docs/wire-formats.md`](docs/wire-formats.md) | Byte-level protocol formats |
 | [`TODO.md`](TODO.md) | Numbered work plan |
 
 ---
@@ -101,46 +103,64 @@ application writes `SCB->VTOR` at `0x0807AA98` and references
 
 ## 2.3 MCU
 
-**STM32F1xx-class, ARMv7-M Cortex-M3 (Thumb-2), LQFP144, 1 MB flash,
-96 KB SRAM.** The PCB's QFP is marked `AT32F421` — an Artery part with an
-F1-compatible peripheral map. The register map the firmware uses is
-unambiguously F1:
+**AT32F421-class MCU, ARMv7-M Cortex-M4 (Thumb-2) with hardware FPU,
+LQFP144.** The PCB's QFP is marked `AT32F421`. Three independent
+observations fix the core:
+
+1. the image executes ~780 VFP instructions (`vmov`, `vcvt`, `vstr`,
+   `vmul`, `vdiv`, `vcmp`) — impossible on a Cortex-M3;
+2. the ADC is used at **`0x40013C00`**, the AT32 ADC address, not at the
+   STM32F1 ADC1 address `0x40012400`;
+3. `0x40012404` is referenced separately (once, at `0x08066B18`), so the
+   two addresses are different peripherals of the AT32 map.
+
+The rest of the peripheral map is F1-compatible:
 
 | Peripheral | Address | Refs |
 |---|---|---|
-| RCC | `0x40021000` | 99 |
-| FLASH | `0x40022000` | 38 |
-| GPIOA … GPIOG | `0x40010800` … `0x40012000` | 190 / 150 / 47 / 5 / 1 / 9 / 33 |
-| USART1 / USART3 | `0x40013800` / `0x40004800` | 25 / 38 |
-| UART4 / UART5 | `0x40004C00` / `0x40005000` | 17 / 51 |
-| SPI1 / SPI3 | `0x40013400` / `0x40003C00` | 47 / 20 |
-| USB | `0x40005C40`–`0x40006000` | 47 |
-| FSMC | `0xA0000000` | 4 |
+| RCC | `0x40021000` | 10 |
+| FLASH | `0x40022000` | 7 |
+| GPIOA … GPIOG | `0x40010800` … `0x40012000` | 28 / 32 / 17 / 4 / 1 / 5 / 11 |
+| USART1 / USART3 | `0x40013800` / `0x40004800` | 5 / 12 |
+| UART4 / UART5 | `0x40004C00` / `0x40005000` | 5 / 12 |
+| SPI1 / SPI3 | `0x40013400` / `0x40003C00` | 2 / 4 |
+| USB | `0x40005C40`–`0x40006000` | 28 |
+
+The USB block is a **CDC-ACM virtual COM port**: the descriptor set at
+`0x08084938` is a device descriptor with idVendor `0x0483` and idProduct
+`0x5720` (STMicroelectronics' virtual COM port pair), one configuration,
+one CDC-ACM interface and two bulk endpoints (`0x81` in, `0x02` out,
+64 bytes), with the strings "Heatmiser", "Accent" and "ST Mass". The
+handler at `0x0800FF74` bridges the CDC data to UART5.
+| FSMC | `0xA0000000` | 2 |
 
 Every F4-map alternative was searched for and **not found** (RCC
-`0x40023800`: 0 hits; FLASH `0x40023C00`: 0 hits). No FPU
-(`0xE000EF34` absent). The initial SP `0x20016B20` requires ≥ 93 KB of
-SRAM ⇒ the 96 KB part.
+`0x40023800`: 0 hits; FLASH `0x40023C00`: 0 hits). The initial SP
+`0x20016B20` requires ≥ 93 KB of SRAM.
 
-**Unresolved:** the exact silicon revision (see
-[`docs/open-questions.md`](docs/open-questions.md) §2). If the part is
-genuinely Cortex-M4, the ABI and memory sizes change.
+**Consequence:** the rebuild's `-mcpu=cortex-m3 -mfloat-abi=soft` is
+known to be wrong; TODO 4.7 switches it to Cortex-M4 with hard float.
+
 
 ## 2.4 Terminals — from the PCB and the firmware agreeing
 
 PCB silkscreen (rear) `B A G W2 W Y2 | Y1 O R Opd Gnd St` matches the
 firmware's own *Terminal Definition* strings exactly:
 
-| Terminal | Meaning | Firmware string |
-|---|---|---|
-| `W` | heat stage 1 | `Heating--W_OB` |
-| `W2` | heat stage 2 / aux heat | `Aux Heating--W2_AUX` |
-| `Y` | cool stage 1 | `1st compressor--Y` |
-| `Y2` | cool stage 2 | `2nd compressor--Y2` |
-| `G` | fan | `Fan--G` |
-| `O/B` | reversing valve | `O/B Valve--W_OB` |
+| Terminal | Meaning | Firmware string | GPIO [F] |
+|---|---|---|---|
+| `W` | heat stage 1 | `Heating--W_OB` | PA3 |
+| `W2` | heat stage 2 / aux heat | `Aux Heating--W2_AUX` | PA1 |
+| `Y` | cool stage 1 | `1st compressor--Y` | PB13 |
+| `Y2` | cool stage 2 | `2nd compressor--Y2` | PA2 |
+| `G` | fan | `Fan--G` | PB14 |
+| `O/B` | reversing valve | `O/B Valve--W_OB` | `[I]` unknown |
 
-⇒ a **2-stage reversible heat pump**.
+⇒ a **2-stage reversible heat pump**. The five GPIO assignments come
+from the point-registry relay handlers (`0x08042674`, `0x080426A8`,
+`0x08013268`, `0x0801329C`, `0x0803EA9C`), each of which reads one pin,
+and are confirmed by the output init at `0x0807DC5C`.
+
 
 ---
 
@@ -163,28 +183,51 @@ firmware/                              the rebuild (C)
   Makefile                             cross-build + size report
   linker/
     stm32f1xx_app.ld                   app-partition linker script
-  include/                             headers (1,143 lines)
+  include/                             headers
     stm32f1xx.h                        bare F1 register definitions
     system.h  gpio.h  board.h  hvac.h
     bmp.h  framebuffer.h  asset_store.h  param_block.h
+    digits.h  screen.h  touch.h  panel.h  usb.h
+    bacnet.h  ota.h  lora_payload.h  rtc.h  si7021.h
   src/
-    startup/startup_stm32f1xx.c        reset vector + C runtime (185)
-    hal/system.c                       clock: HSE→PLL×9→72 MHz (95)
-    hal/gpio.c                         GPIO access (71)
-    drivers/param_block.c              shared parameter block (181)
-    app/hvac.c                         HVAC state machine (537)
-    app/main.c                         entry point (45)
-    ui/framebuffer.c                   RGB565 framebuffer (152)
-    ui/bmp.c                           BMP decoder (164)
-    ui/asset_store.c                   FAT32 reader (501)
-    board.c                            board pin map (64)
+    startup/startup_stm32f1xx.c        reset vector + C runtime
+    hal/system.c                       clock: HSE→PLL×9→72 MHz
+    hal/gpio.c                         GPIO access
+    hal/uart.c  spi.c  i2c.c  adc.c  timer.c  dma.c  fsmc.c
+    hal/sensor_bus.c                   the GPIOC two-wire bus
+    hal/usb.c                          the CDC-ACM device
+    hal/panel.c                        the MIPI-DCS display driver
+    drivers/param_block.c              shared parameter block
+    drivers/eeprom.c                   AT24C256 over the bit-banged bus
+    drivers/rtc.c  si7021.c            the RAM-backed time and humidity
+    app/hvac.c                         HVAC state machine
+    app/schedule.c  meter.c  faults.c  sensors.c  selftest.c
+    app/scheduler.c  main.c
+    ui/framebuffer.c                   RGB565 framebuffer
+    ui/bmp.c                           BMP decoder, whole-image and streaming
+    ui/asset_store.c  nor_store.c      FAT32 reader over the NOR
+    ui/digits.c                        the eleven numeric glyph families
+    ui/screen.c  touch.c               the widget and touch layers
+    net/at_client.c  esp_at.c  lora_at.c
+    net/http_client.c  mqtt_sn.c  modbus.c
+    net/bacnet.c                       the BACnet IP and MS/TP servers
+    net/ota.c                          the FTP update client
+    net/lora_payload.c                 the LoRaWAN uplink codec
+    board.c                            board pin map
   tests/
     Makefile                           host build
-    test_main.c                         43 checks (356)
+    test_main.c                        the main harness
+    test_protocols.c                   the protocol and UI checks
+    differential.c                     the differential harness
+    fake_i2c.c  fake_sensor_bus.c      simulated devices
 
 tools/                                 analysis and packaging
-  hex2elf.py                           flat image → ELF for REA/Hopper (162)
-  mkassets.py                          icons → FAT32 NOR image (387)
+  hex2elf.py                           flat image → ELF for REA/Hopper
+  analyze.py                           Thumb-2 flow analyser: pools, strings,
+                                       call graph, peripheral census, and
+                                       the `lit` and `table` queries
+  mkassets.py                          icons → FAT32 NOR image
+  smoke_test.py                        the layout regression
 
 build/                                generated
   nor-image.bin                        2 MiB FAT32 asset image
@@ -192,9 +235,6 @@ build/                                generated
 
 toolchains/                            ARM GNU Toolchain 13.3 (not in git)
 ```
-
-Source totals: **4,187 lines** of C, headers, linker script and Python
-across 25 files.
 
 ---
 
@@ -241,14 +281,43 @@ rules             demand evaluation, stage-2 soak, heat/cool exclusivity,
 ## 4.5 `ui/`
 
 - **`bmp.c`** — 32bpp BGRA with a real opacity channel, 24bpp opaque,
-  bottom-up rows, 4-byte row padding.
+  16bpp packed, bottom-up rows, 4-byte row padding. `bmp_draw_stream()`
+  fetches the image **one row at a time**, because the largest glyph
+  (`nb0.bmp`) is 82,836 bytes and the device has 96 KiB of SRAM.
 - **`framebuffer.c`** — RGB565 fill / rect / clipped blit / alpha blend.
 - **`asset_store.c`** — FAT32 over an abstract read callback, so the same
   code runs against the real FSMC NOR and an in-memory image.
   Case-insensitive 8.3 path matching, matching the firmware's
   `\White\105.bmp` convention.
+- **`digits.c`** — the eleven numeric glyph families the firmware
+  references, their sign and decimal-point glyphs, a signed fixed-point
+  number renderer and the wifi bars.
+- **`screen.c`** — a screen is a list of picture, label, number and
+  button widgets; a button carries its hit rectangle.
+- **`touch.c`** — touch handling and the touchpad lock.
 
-## 4.6 `board.c`
+## 4.6 `net/`
+
+- **`bacnet.c`** — the object table, the ReadProperty encoding, the
+  BACnet/IP server (BVLC + NPDU + APDU) and the MS/TP server.
+- **`ota.c`** — the FTP update client: the `U-LW-%d.%02d` version
+  naming, the comparison, the check and the download-and-apply.
+- **`lora_payload.c`** — the LoRaWAN uplink payload codec.
+
+## 4.7 `hal/`
+
+- **`usb.c`** — the CDC-ACM device stack: the control endpoint, the
+  class requests and the bulk rings.
+- **`panel.c`** — the MIPI-DCS display driver for the 480×320 panel.
+
+## 4.8 `drivers/`
+
+- **`rtc.c`** — the S35390 model bound to the RAM shadow the firmware
+  uses.
+- **`si7021.c`** — the SI7021 model bound to the humidity byte the
+  firmware uses.
+
+## 4.9 `board.c`
 
 Every board-specific fact in one place so drivers stay portable.
 Facts are tagged `[F]` (from the firmware), `[P]` (from the PCB) or
@@ -263,6 +332,20 @@ currently **`[I]` placeholders**.
 
 `Hardware Checking...` (`0x08016013`) then, in order: relay → EEPROM →
 NOR flash → RTC → humidity → WiFi module → 3× NTC → light sensor.
+
+## 5.1b How the sensors are reached — the key hardware result
+
+| Sensor | Path | Evidence |
+|---|---|---|
+| AT24C256 EEPROM | **bit-banged I²C on GPIOG** (SDA = PG6, SCL = PG8) | `0x08042A08`–`0x08042C88`, API `0x08042938`, device byte `0xA0`, reply `"#E"` |
+| NTC ×3, light sensor | **on-chip ADC at the AT32 address `0x40013C00`** | HAL `0x08066B2C`–`0x08066D98`, sampling `0x0806850C` |
+| external NTC channels | **second two-wire bus on GPIOC** (data = PC8, clock = PC9) | primitives `0x08061958`–`0x08061B70`, user `0x08062504` |
+| S35390 RTC, SI7021 | not reached over any bus — time and humidity live in RAM | see [`docs/open-questions.md`](docs/open-questions.md) §1 |
+
+There is **no I²C peripheral in the image at all**; the earlier census
+that reported "zero ADC references" was wrong because it searched for the
+STM32F1 ADC address only.
+
 
 ## 5.2 Protocol surfaces
 
@@ -324,15 +407,31 @@ at `0x08005950` — which is what the bootloader contract depends on.
 |---|---|
 | ARM toolchain 13.3 | installed in-tree, no root needed |
 | ELF wrapper for REA/Hopper | `tools/hex2elf.py`; REA reports **685 procedures** |
+| Static analyser | `tools/analyze.py` — pools, strings, call graph, census |
 | Linker script | reproduces the original partition layout exactly |
 | Register header | bare SPL-style F1 definitions, only peripherals in use |
 | Startup + vector table | 84 entries; layout **identical** to the original |
 | Clock + GPIO HAL | working |
+| Bit-banged I2C master | PG6/PG8, host-tested against a simulated AT24C256 |
+| AT24C256 EEPROM driver | 32 KiB, `"#E"` signature check, host-tested |
+| ADC driver | AT32 ADC at `0x40013C00`, channel select + inverted counts |
+| NTC scaling | recovered divider maths; rebuild's own temperature curve |
+| Measurement bus | PC8/PC9 two-wire bus, host-tested against a simulated device |
+| Boot self-test | relay + EEPROM steps, as the original's sequence |
 | Parameter-block envelope | magic + payload, FLASH read/write |
 | HVAC state machine | complete; fully host-tested |
 | Framebuffer / BMP / FAT32 store | complete; host-tested |
 | Asset packer | 2 MiB FAT32 image; missing-asset report + manifest |
-| Host test harness | **43 checks, 0 failures** |
+| USB device (CDC-ACM) | complete; the descriptor set is the original's |
+| Display driver | complete; the panel bus is SPI3 |
+| BACnet IP + MS/TP servers | complete |
+| OTA update client | complete |
+| LoRaWAN payload codec | complete (the field layout is a rebuild choice) |
+| Time and humidity sources | complete (both arrive over the building bus) |
+| Screen, widget and touch layers | complete |
+| Host test harness | **326 checks, 0 failures** |
+| Differential harness | **82,944 cases, no divergence** |
+
 
 Verified layout match:
 
@@ -359,8 +458,15 @@ the wrapper is the only route.
 **REA's string discovery does not work on this target**: `list_strings`
 and `search_strings` return nothing, because Hopper does not create string
 objects for constants embedded in the executable section — and in this
-firmware the strings *are* embedded in code. String recovery therefore
-needs a standalone scanner (TODO 2.2).
+firmware the strings *are* embedded in code. Hopper also found only 685
+procedures and none in the self-test region.
+
+Because of that, `tools/analyze.py` does the heavy lifting: it performs
+its own Thumb-2 flow analysis (1,318 functions, 5,324 strings in ~1.5 s)
+and recovers literal pools, PC-relative string references, the call graph,
+per-function RAM/peripheral usage and the peripheral census. REA remains
+useful for an independent look at a function's pseudocode.
+
 
 ## 7.2 Two analysis traps hit, and how they were resolved
 
@@ -381,10 +487,14 @@ needs a standalone scanner (TODO 2.2).
   green.
 - **Layout regression** — the built vector table is compared against the
   original on every build.
-- **Differential testing (planned)** — transliterate the original's
-  control functions from REA pseudocode and drive both implementations with
-  identical inputs, diffing the relay outputs. This needs **no hardware**
-  and converts every *inferred* control rule into an *observed* one.
+- **Differential testing (done, in software)** — `firmware/tests/differential.c`
+  compares the HVAC state machine against an independent transcription of
+  the control rules over 82,944 cases and finds no divergence. It found
+  two real defects on the way: the `1 Cool Stage` equipment type could
+  never call for cooling, and the fan in the Fan/Ventilate modes was
+  gated by the occupancy input, which the specification does not say.
+  The remaining half — transliterating the original's own control
+  function (`0x0807F9BC`) — is still open.
 
 ---
 
@@ -393,25 +503,29 @@ needs a standalone scanner (TODO 2.2).
 Full detail in [`docs/open-questions.md`](docs/open-questions.md). The
 ones that gate the most work:
 
-1. **How are the sensors reached?** The corrected census shows **zero**
-   references to I²C1/I²C2/ADC1 — yet the firmware uses an EEPROM, an
-   RTC, a humidity sensor and three NTC channels. Bit-banged, front-ended,
-   or delegated to the ESP-07S? *This decides the entire sensor HAL.*
-2. **Exact MCU revision** — Cortex-M3 or M4? Changes ABI and memory sizes.
-3. **Parameter-block payload layout** — the bootloader↔application contract.
-4. **Stage-2 / balance-point rule** — stage 2 is not a simple second
+1. **Parameter-block payload layout** — the bootloader↔application
+   contract.
+2. **Stage-2 / balance-point rule** — stage 2 is not a simple second
    setpoint.
-5. **Modbus register map and BACnet object table** — names are recovered;
-   addresses and object IDs are not.
-6. **MQTT payload encryption** — mode and key usage.
-7. **Display controller** — the SPI command set.
-8. **The 100 missing assets** — needs the 2026-10-01 icon drop or a NOR
+3. **Modbus register numbers and BACnet object identifiers** — the
+   registry's names and handlers are recovered; the numbering is not.
+4. **MQTT payload encryption** — mode and key usage.
+5. **Display controller** — the bus is SPI3 and the command set is the
+   standard MIPI-DCS subset, but the part number is not recoverable
+   statically.
+6. **The 100 missing assets** — needs the 2026-10-01 icon drop or a NOR
    dump.
-9. **Relay GPIO assignments** — the port/pin mapping is still a
-   placeholder.
+7. **The O/B valve pin** — the only relay output not identified.
+8. **The transliteration of the original's control function** — the
+   remaining half of the differential test.
+
+Closed since the first pass: the MCU revision, the USB device's role
+(a CDC-ACM virtual COM port), the panel bus (SPI3), and the RTC and
+humidity read path (both arrive over the building bus, not locally).
 
 No physical unit is available, so all verification is currently
 software-only.
+
 
 ---
 
@@ -433,6 +547,10 @@ python3 tools/mkassets.py --icons Mark-icons-2025.10.29 \
 tools/hex2elf.py Falcon-HP-144pin-8M-Mark-261001.hex \
     --base 0x08005800 --entry 0x08005950 -o /tmp/app.elf
 npx rea-agents@6.7.0 analyze /tmp/app.elf
+
+# or analyse it directly (no Hopper needed, no MCP needed)
+/tmp/opencode/.venv/bin/python tools/analyze.py \
+    --hex Falcon-HP-144pin-8M-Mark-261001.hex census
 ```
 
 Work items are tracked in [`TODO.md`](TODO.md); the suggested execution

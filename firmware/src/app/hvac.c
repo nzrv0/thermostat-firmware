@@ -140,6 +140,7 @@ void hvac_set_setpoint(int16_t t)
 void hvac_set_heat_setpoint(int16_t t)  { g_ctx.state.heat_setpoint = t; }
 void hvac_set_cool_setpoint(int16_t t)  { g_ctx.state.cool_setpoint = t; }
 void hvac_set_deadband(int16_t d)       { g_ctx.state.deadband = d; }
+void hvac_set_switch_diff(int16_t d)    { g_ctx.state.switch_diff = d; }
 
 void hvac_set_hold(int active)
 {
@@ -208,6 +209,7 @@ static int equipment_has_cool(hvac_equipment_t e)
     case HVAC_EQUIP_HEAT_PUMP:
     case HVAC_EQUIP_COOL_HEAT:
     case HVAC_EQUIP_COOL_ONLY:
+    case HVAC_EQUIP_1_COOL_STAGE:
     case HVAC_EQUIP_DUAL_FUEL:
     case HVAC_EQUIP_1_HEAT_1_COOL:
     case HVAC_EQUIP_2_HEAT_2_COOL:
@@ -325,24 +327,30 @@ void hvac_output(hvac_output_t *out)
 
     memset(out, 0, sizeof(*out));
 
-    if (s->mode == HVAC_MODE_OFF || s->hold_active || s->holiday_active ||
-        !s->occupancy)
+    /* A hold or a holiday switches the system off entirely, and so does
+     * the Off mode. */
+    if (s->mode == HVAC_MODE_OFF || s->hold_active || s->holiday_active)
     {
-        /* Only the fan may run in OFF/hold/holiday. */
-        if (s->fan_mode == HVAC_FAN_LOW || s->fan_mode == HVAC_FAN_MED ||
-            s->fan_mode == HVAC_FAN_HIGH || s->fan_mode == HVAC_FAN_AUTO)
-        {
-            if (s->mode == HVAC_MODE_FAN || s->mode == HVAC_MODE_VENTILATE)
-            {
-                fan = 1;
-            }
-        }
         goto apply;
     }
 
+    /* In the fan and ventilate modes the fan runs and nothing else;
+     * the mode itself is the request. */
     if (s->mode == HVAC_MODE_FAN || s->mode == HVAC_MODE_VENTILATE)
     {
         fan = 1;
+        goto apply;
+    }
+
+    /* The occupancy input gates the call for heat or cooling, not the
+     * fan, which still runs when a fan speed is asked for. */
+    if (!s->occupancy)
+    {
+        if (s->fan_mode == HVAC_FAN_LOW || s->fan_mode == HVAC_FAN_MED ||
+            s->fan_mode == HVAC_FAN_HIGH)
+        {
+            fan = 1;
+        }
         goto apply;
     }
 

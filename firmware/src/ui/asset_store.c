@@ -345,18 +345,21 @@ static int find_subdir(const asset_store_t *st, uint32_t dir_cluster,
     return -3;
 }
 
-uint32_t asset_store_find(const asset_store_t *st, const char *path)
+int asset_store_lookup(const asset_store_t *st, const char *path,
+                       uint32_t *out_cluster, uint32_t *out_size)
 {
     char     comp[ASSET_NAME_MAX];
-    uint32_t cluster = st->root_cluster;
+    uint32_t cluster;
     uint32_t file_cluster = 0;
     uint32_t size = 0;
     const char *p = path;
 
     if (st == NULL || path == NULL)
     {
-        return ASSET_INVALID;
+        return -1;
     }
+
+    cluster = st->root_cluster;
 
     /* Skip any leading backslash. */
     while (*p == '\\')
@@ -371,7 +374,7 @@ uint32_t asset_store_find(const asset_store_t *st, const char *path)
 
         if (len == 0 || len >= sizeof(comp))
         {
-            return ASSET_INVALID;
+            return -1;
         }
         memcpy(comp, p, len);
         comp[len] = '\0';
@@ -381,61 +384,49 @@ uint32_t asset_store_find(const asset_store_t *st, const char *path)
             /* Last component: the file. */
             if (find_in_dir(st, cluster, comp, &file_cluster, &size) != 0)
             {
-                return ASSET_INVALID;
+                return -1;
             }
-            return file_cluster;
+            if (out_cluster != 0)
+            {
+                *out_cluster = file_cluster;
+            }
+            if (out_size != 0)
+            {
+                *out_size = size;
+            }
+            return 0;
         }
 
         if (find_subdir(st, cluster, comp, &cluster) != 0)
         {
-            return ASSET_INVALID;
+            return -1;
         }
         p = slash + 1;
     }
 
-    return ASSET_INVALID;
+    return -1;
+}
+
+uint32_t asset_store_find(const asset_store_t *st, const char *path)
+{
+    uint32_t cluster = 0;
+
+    if (asset_store_lookup(st, path, &cluster, 0) != 0)
+    {
+        return ASSET_INVALID;
+    }
+    return cluster;
 }
 
 uint32_t asset_store_size(const asset_store_t *st, const char *path)
 {
-    char     comp[ASSET_NAME_MAX];
-    uint32_t cluster = st->root_cluster;
-    uint32_t file_cluster = 0;
     uint32_t size = 0;
-    const char *p = path;
 
-    while (*p == '\\')
+    if (asset_store_lookup(st, path, 0, &size) != 0)
     {
-        p++;
+        return 0;
     }
-
-    while (*p != '\0')
-    {
-        const char *slash = strchr(p, '\\');
-        size_t      len = slash ? (size_t)(slash - p) : strlen(p);
-
-        if (len == 0 || len >= sizeof(comp))
-        {
-            return 0;
-        }
-        memcpy(comp, p, len);
-        comp[len] = '\0';
-
-        if (slash == NULL)
-        {
-            if (find_in_dir(st, cluster, comp, &file_cluster, &size) != 0)
-            {
-                return 0;
-            }
-            return size;
-        }
-        if (find_subdir(st, cluster, comp, &cluster) != 0)
-        {
-            return 0;
-        }
-        p = slash + 1;
-    }
-    return 0;
+    return size;
 }
 
 int asset_store_read(const asset_store_t *st, uint32_t first_cluster,

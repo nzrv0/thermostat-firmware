@@ -15,11 +15,18 @@
  *   G   Fan                        "Fan--G"             0x08073DF4
  *   O/B Reversing valve            "O/B Valve--W_OB"    0x08073E50
  *
- * Which GPIO port drives which terminal is not recorded in the firmware
- * itself, so the mapping below is a named placeholder: the driver layer
- * exposes gpio_relay_*() and the port/pin assignment lives in one place
- * (board.c) so it can be corrected from the schematic without touching
- * call sites. See docs/hw-map.md for the open items.
+ * Which GPIO port drives which terminal is now recorded in the firmware:
+ * the point-registry relay handlers each read one pin, and the board
+ * output init at 0x0807DC5C configures exactly those five pins.
+ *
+ *   W   PA3   0x08042674      W2  PA1   0x080426A8
+ *   Y   PB13  0x08013268      Y2  PA2   0x0801329C
+ *   G   PB14  0x0803EA9C
+ *
+ * The O/B reversing valve is driven by the firmware but is not published
+ * in the point registry, so its pin is still unknown; it stays a
+ * placeholder. The port/pin assignment lives in one place (board.c) so it
+ * can be corrected without touching call sites. See docs/hw-map.md.
  */
 
 #ifndef GPIO_H

@@ -69,6 +69,12 @@ uint32_t asset_store_find(const asset_store_t *st, const char *path);
 /* Look up a file and return its size. */
 uint32_t asset_store_size(const asset_store_t *st, const char *path);
 
+/* Look up a file and return its first cluster and/or its size in one
+ * directory traversal. Either output pointer may be NULL. Returns 0 on
+ * success, -1 if the path does not resolve. */
+int asset_store_lookup(const asset_store_t *st, const char *path,
+                       uint32_t *out_cluster, uint32_t *out_size);
+
 /* Read len bytes of a file starting at offset. `first_cluster` is the
  * value returned by asset_store_find(). */
 int asset_store_read(const asset_store_t *st, uint32_t first_cluster,

@@ -150,6 +150,8 @@ void hvac_set_setpoint(int16_t tenth_c);
 void hvac_set_heat_setpoint(int16_t tenth_c);
 void hvac_set_cool_setpoint(int16_t tenth_c);
 void hvac_set_deadband(int16_t tenth_c);
+/* The switch difference, the gap between the call and the setpoint. */
+void hvac_set_switch_diff(int16_t tenth_c);
 void hvac_set_hold(int active);
 void hvac_set_holiday(int active);
 void hvac_set_touchpad_lock(int locked);

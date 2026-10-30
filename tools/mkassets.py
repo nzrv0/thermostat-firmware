@@ -355,13 +355,20 @@ def main():
         print("WARNING: image data exceeds the 2 MiB NOR capacity")
 
     image = build_fat32(files)
-    with open(args.out, "wb") as fh:
+    # Write to a temporary file and rename: a broken pipe (the tool was
+    # piped into `head`) then leaves the previous image in place instead
+    # of a truncated one.
+    temporary = args.out + ".tmp"
+    with open(temporary, "wb") as fh:
         fh.write(image)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporary, args.out)
     print("wrote %s (%d bytes)" % (args.out, len(image)))
 
     if args.firmware:
         want = firmware_manifest(args.firmware)
-        have = {p for p, _ in files}
+        have = {p.replace("/", "\\") for p, _ in files}
         missing = sorted(w for w in want if w not in have)
         extra = sorted(h for h in have if h not in want)
         print()

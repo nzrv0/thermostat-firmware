@@ -142,6 +142,17 @@ Schedules are nested:
 **BACnet** — `bacnetip servo start...` (`0x0806B098`), menu entries
 `Bacnet IP` (`0x0809275C`) and `Bacnet MS/TP` (`0x08092768`).
 
+The two servers share the point registry, so one object table serves
+Modbus TCP, Modbus RTU and both BACnet servers. The rebuild implements
+them in `firmware/src/net/bacnet.c`: the object table, the
+ReadProperty encoding and the two transports (BVLC + NPDU + APDU over
+UDP, and the MS/TP frame with its CRC over RS-485).
+
+**USB** — a CDC-ACM virtual COM port; see [hw-map.md](hw-map.md) for
+the recovered descriptor set. The console is a USB-to-UART5 bridge:
+the USB handler at `0x0800FF74` moves the CDC data to UART5
+(`0x40005000`) through the buffers at `0x200002A4`–`0x200002F8`.
+
 The **point registry** is a table of four-word descriptors at
 `0x08090528`–`0x08090990`:
 
@@ -149,11 +160,23 @@ The **point registry** is a table of four-word descriptors at
 { name_ptr, label_ptr, value_or_variable, handler_ptr }
 ```
 
-26 descriptors were recovered this way (see [hw-map.md](hw-map.md) for the
-relay subset). The `value_or_variable` word is either a literal (relay
-statuses, all-zero) or a **RAM address** — e.g. `SystemMode_Commend` →
-`0x200020E0`, `TempFormat` → `0x20002188`. These RAM addresses locate the
-live state variables, which is how the protocol layers reach the HVAC core.
+The published points, in order, are `Actual_Room_temperature`,
+`Humidity`, `HeatSetTemp`, `CoolSetTemp`, `HoldEndtTime`, `HoldSetTemp`,
+`HolidayStarttTime`, `HolidayEndtTime`, `MaxSetTempLimit`,
+`MinSetTempLimit`, the five relay states (`W1relaystatus`,
+`W2relaystatus`, `Y1relaystatus`, `Y2relaystatus`, `Fanrelaystatus`),
+`Mode`, `HeatingStatus`, `FlagiSTouchPadLock`, `FlagiSHolidaying`,
+`FlagiSHolding`, and further down `SysError`, `TempFormat` and
+`ProgramMode`.
+
+The `value_or_variable` word is either a literal (relay statuses, all-zero)
+or a **RAM address** — e.g. `SystemMode_Commend` → `0x200020E0`,
+`TempFormat` → `0x20002188`. These RAM addresses locate the live state
+variables, which is how the protocol layers reach the HVAC core.
+
+The relay handlers are the ones that fix the GPIO map: each reads
+exactly one pin, which is how `W1 = PA3`, `W2 = PA1`, `Y1 = PB13`,
+`Y2 = PA2` and `Fan = PB14` were established.
 
 ## Over-the-air update
 
@@ -167,11 +190,20 @@ live state variables, which is how the protocol layers reach the HVAC core.
 
 ## Human interface
 
-Roughly 1,300 bitmap assets (see [assets.md](assets.md)), a digit-font set
-(`digitbg.bmp`, `setnum0..9`, `mtnum0..9`, `mtlnum0..9`, `shnum0..9`,
-`stnum0..9`, `tmnum0..9`, `wi0..4`), and an interaction model with a
-**touchpad lock** (`Flag TouchPad Lock` / `FlagiSTouchPadLock`,
-`0x08092CD0`/`0x08092CE4`).
+Roughly 1,300 bitmap assets (see [assets.md](assets.md)), **eleven**
+digit-font families (`setnum`, `mtnum`, `mtlnum`, `shnum`, `stnum`,
+`tmnum`, `b`, `nb`, `scb`, `shb`, `setln`, plus the sign glyphs
+`mtnum00.bmp`/`b00.bmp`, the decimal points `setndot.bmp`/`mtdot.bmp`,
+the background `digitbg.bmp` and the wifi bars `wi0..wi4`), and an
+interaction model with a **touchpad lock** (`Flag TouchPad Lock` /
+`FlagiSTouchPadLock`, `0x08092CD0`/`0x08092CE4`, registry entry
+`0x08090778`, handler `0x0803EBC5`).
+
+The rebuild's screen layer is in `firmware/src/ui/screen.c` (a screen is
+a list of picture, label, number and button widgets; a button carries
+its hit rectangle) and the touch layer in `firmware/src/ui/touch.c`,
+where a locked touchpad swallows every touch except the one that
+unlocks it.
 
 Menu/settings strings recovered include sensor selection
 (`Internal Sensor`, `Internal + Out Door Sensor`, `Out Door Sensor`),

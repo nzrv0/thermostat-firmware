@@ -122,8 +122,6 @@ param_status_t param_block_check(void)
 
 param_status_t param_block_store(const uint8_t *src, uint32_t len)
 {
-    uint32_t page_base = PARAM_BLOCK_ADDR & ~(FLASH_PAGE_SIZE - 1UL);
-    uint32_t offset = PARAM_BLOCK_ADDR - page_base;
     uint32_t i;
     static uint8_t page[FLASH_PAGE_SIZE];
 
@@ -137,9 +135,9 @@ param_status_t param_block_store(const uint8_t *src, uint32_t len)
     for (i = 0; i < len; i++)
     {
         uint32_t addr = PARAM_BLOCK_PAYLOAD + i;
-        uint32_t page = addr & ~(FLASH_PAGE_SIZE - 1UL);
+        uint32_t page_base = addr & ~(FLASH_PAGE_SIZE - 1UL);
 
-        if (flash_erase_page(page) != 0)
+        if (flash_erase_page(page_base) != 0)
         {
             return PARAM_ERR_FLASH;
         }

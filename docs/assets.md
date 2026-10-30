@@ -151,7 +151,49 @@ optional, separators are backslashes, and matching is **case-insensitive**
 pixel and alpha-blended blit, plus clipping.
 
 `firmware/src/ui/bmp.c` — BMP header parsing and drawing, handling
-bottom-up row order, 32bpp with alpha and 24bpp.
+bottom-up row order, 32bpp with alpha, 24bpp and the packed image's
+16bpp.
+
+### Drawing the assets without a resident buffer
+
+`bmp_draw_stream()` fetches the image **one row at a time** through a
+read callback. This matters: the largest glyph the firmware uses,
+`nb0.bmp`, is 117×177 at 32bpp = **82,836 bytes**, and the device has
+96 KiB of SRAM in total. A whole-image buffer could never hold it, so
+the rebuild streams.
+
+The reader is the asset store's own:
+
+```c
+asset_source_t src = { store, cluster };
+bmp_draw_stream(asset_read_at, &src, size, fb, x, y);
+```
+
+`firmware/src/ui/digits.c` — the numeric glyph families. The firmware
+references **eleven** of them, recovered from the image:
+
+| Family | Assets | Size | Used for |
+|---|---|---|---|
+| `setnum` | `setnum0..9` | 22×33 | the setpoint number |
+| `mtnum` | `mtnum0..9`, `mtnum00` | 40×62 | the main temperature |
+| `mtlnum` | `mtlnum0..9`, `mtlnum00` | 16×23 | the temperature line |
+| `shnum` | `shnum0..9` | — | the schedule hour |
+| `stnum` | `stnum0..9` | — | the status number |
+| `tmnum` | `tmnum0..9` | — | the timer number |
+| `b` | `b0..9`, `b00` | 26×62 | the big number |
+| `nb` | `nb0..9` | 117×177 | the number bar |
+| `scb` | `scb0..9` | 22×33 | the schedule column bar |
+| `shb` | `shb0..9` | 22×33 | the schedule hour bar |
+| `setln` | `setln0..9` | 11×17 | the setpoint line number |
+
+Three families also carry a sign and a decimal point: `mtnum00.bmp` and
+`b00.bmp` are a **horizontal bar** (23×7) used as the sign in the
+temperature slot, `setndot.bmp` (2×2) is the setpoint's decimal point
+and `mtdot.bmp` (4×4) the temperature's. `digitbg.bmp` (304×177) is the
+digit background and `wi0..wi4` are the wifi bars.
+
+`number_blit()` renders a signed fixed-point number with the decimal
+point, right or left aligned, with zero padding.
 
 ## Known limitations
 

@@ -61,7 +61,7 @@ make host-test              # builds and runs
 make host-test NOR_IMAGE=../build/nor-image.bin
 ```
 
-Currently **43 checks, 0 failures**, covering:
+Currently **184 checks, 0 failures**, covering:
 
 | Area | Checks |
 |---|---|
@@ -69,9 +69,33 @@ Currently **43 checks, 0 failures**, covering:
 | Framebuffer | fill, rect clipping at edges, 50 % alpha blend, negative-coordinate clipping |
 | BMP | valid header parse, dimensions, bit depth, alpha presence, row stride, bad signature rejection, truncated file rejection |
 | Asset store | mount, volume label `AT32`, BPB geometry, `\White\105.bmp`, root `logo.bmp`, `\fan\10.bmp`, missing-asset negative case, full BMP header read-back with dimension and bit-depth checks |
+| Board map | the recovered relay and sensor-bus pin assignments (W1 = PA3, W2 = PA1, Y1 = PB13, Y2 = PA2, Fan = PB14, I²C on PG6/PG8, measurement bus on PC8/PC9, ADC at `0x40013C00`) |
+| EEPROM | the AT24C256 driver driven over the real bit-banged protocol against a simulated device: the `"#E"` signature, a four byte read, the 32 KiB range check and the rejected empty/oversized requests |
+| Sensors | the recovered divider maths (`raw × 12500 / 65536 − 600`, clamped 100…9900 Ω) at two exact points, and the ends of the temperature curve |
+| Measurement bus | the two-wire bus on PC8/PC9 against a simulated device: six sample bytes, the two command bytes, and the START/STOP framing |
+| AT clients | the line oriented client (payload lines, OK/ERROR, timeout) and the Espressif and Dragino command sets and parsers |
+| Cloud | the HTTP request shape and form body, and the MQTT-SN CONNECT/PUBLISH/SUBSCRIBE packets |
+| Modbus | the register map, the TCP and RTU answers, a write that updates the map, and the exception answers |
+| Schedules, metering, faults | the 1440 minute day model and the period in force, the power and running time, the five published faults |
+| Scheduler | the tick, the message queue order, the handler dispatch and the overflow counter |
 
 The harness is deliberately the *only* place where behaviour is asserted,
 so it stays the regression net for the rest of the rebuild.
+
+## Layout smoke test
+
+`tools/smoke_test.py` compares the rebuilt image against the shipped one
+and runs on every `make`:
+
+```bash
+cd firmware && make            # builds, sizes, then runs the smoke test
+cd firmware && make smoke-test # just the smoke test
+```
+
+It checks the vector table at `0x08005800` (336 bytes), code immediately
+after it at `0x08005950`, the initial stack pointer word against the
+original, every installed vector pointing inside the image, the HEX entry
+record, and that nothing lands in the shared parameter block.
 
 ## Asset image build
 
@@ -125,34 +149,71 @@ objects for data that lies inside the executable section — and in this
 firmware the string constants are interleaved with code. String discovery
 must therefore be done with the standalone scanner below.
 
-### Capstone-based analyser (planned)
+### Capstone-based analyser (working)
 
-`tools/analyze.py` (TODO 2.2) will provide what REA/Hopper cannot:
+`tools/analyze.py` provides what REA/Hopper cannot on this target:
 
 - literal-pool resolution per function
-- peripheral-base attribution (the technique behind the census in
-  [hw-map.md](hw-map.md))
-- string extraction with the correct FAT-style path forms
-- call-graph reconstruction from `BL` targets
-- per-function RAM and peripheral usage
+- peripheral-base attribution by nearest base with a 4 KB window (the
+  technique behind the census in [hw-map.md](hw-map.md))
+- string extraction, including the PC-relative (`ADR`) references the
+  firmware uses for its embedded constants
+- call-graph reconstruction from `BL`/`BLX`, with correct handling of
+  conditional branches and of function-pointer roots
+- per-function RAM/peripheral usage, string cross-references and
+  store-target tracking (`writers`)
+
+It needs `capstone`; the scratch environment lives outside the repository:
+
+```bash
+python3 -m venv /tmp/opencode/.venv
+/tmp/opencode/.venv/bin/pip install capstone==5.0.7
+```
+
+The ARM `objdump` from the in-tree toolchain is the fallback for plain
+disassembly:
+
+```bash
+toolchains/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-objdump \
+    -D -b binary -m arm -M force-thumb --adjust-vma=0x08005800 app.bin
+```
+
+Usage:
+
+```bash
+tools/analyze.py --hex Falcon-HP-144pin-8M-Mark-261001.hex census
+tools/analyze.py --hex ... strings --grep "EEPROM"
+tools/analyze.py --hex ... func 0x08042674
+tools/analyze.py --hex ... range 0x08042900 0x08042d80
+tools/analyze.py --hex ... refs 0x20001469
+tools/analyze.py --hex ... writers 0x20002248
+```
+
+The tool needs the `capstone` module in the interpreter that runs it:
+`/tmp/opencode/.venv/bin/python tools/analyze.py …`.
 
 ### Python environment
 
 The analysis scratch environment lives in `/tmp/opencode/.venv` with
 **capstone 5.0.7**. Not required for the firmware build.
 
+
 ## REA MCP registration (optional)
 
-`rea doctor --client opencode` reports `config_drift` for the opencode
-registration: the MCP server is not registered in
-`~/.config/opencode/opencode.jsonc`. The CLI works regardless, so this is
-only needed if interactive REA tools are wanted in-session:
+The registration is now aligned: `~/.config/opencode/opencode.jsonc`
+carries `npx -y rea-agents@6.7.0 mcp` with
+`HOPPER_LAUNCHER_PATH=/opt/hopper/bin/Hopper`, and
+`rea doctor --client opencode --json` reports `healthy`. The previous
+file is kept at `~/.config/opencode/opencode.jsonc.rea.backup`.
+
+The REA MCP tools appear in an opencode session started **after** that
+change; the CLI works regardless, which is how the analysis in this
+repository is run.
 
 ```bash
-npx rea-agents@6.7.0 setup --client opencode --dry-run --json   # review
-npx rea-agents@6.7.0 setup --client opencode --yes               # apply
-# then restart the client
+npx -y rea-agents@6.7.0 doctor --client opencode --json
 ```
+
 
 ## Housekeeping notes
 

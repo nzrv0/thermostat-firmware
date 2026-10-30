@@ -15,6 +15,10 @@ SIZE      := $(TOOLCHAIN)/bin/arm-none-eabi-size
 TARGET    := falcon-app
 BUILD     := build
 
+# The shipped application partition, used by the layout smoke test.
+ORIGINAL  ?= ../Falcon-HP-144pin-8M-Mark-261001.hex
+SMOKE     := ../tools/smoke_test.py
+
 SRC_DIR   := src
 INC_DIR   := include
 
@@ -33,17 +37,19 @@ C_SOURCES += src/board.c
 OBJECTS := $(addprefix $(BUILD)/,$(notdir $(C_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
-# -mthumb / -mcpu=cortex-m3 matches the shipped image's instruction set
-# (IT blocks and 32-bit Thumb-2 encodings are present; the exact MCU
-# revision is unresolved, so Cortex-M3 is the conservative target - see
-# docs/hw-map.md).
-CPUFLAGS := -mcpu=cortex-m3 -mthumb -mfloat-abi=soft
+# The MCU is an AT32F421: ARMv7-M Cortex-M4 with a hardware FPU. The
+# shipped image executes ~780 VFP instructions (vmov/vcvt/vstr/vmul/vdiv/
+# vcmp), which a Cortex-M3 cannot execute, and it calls functions with the
+# AAPCS-VFP convention, so the rebuild is built the same way: hard float
+# with a single-precision FPU (fpv4-sp-d16). See docs/hw-map.md.
+CPUFLAGS := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 
 DEFS := -DF_CPU=72000000UL
 
 CFLAGS := $(CPUFLAGS) $(DEFS) -I$(INC_DIR) -Og -g3 \
           -Wall -Wextra -Wshadow -Wundef -Wdouble-promotion \
           -ffunction-sections -fdata-sections -fno-common \
+          -fno-unwind-tables -fno-asynchronous-unwind-tables \
           -std=gnu11 -MMD -MP
 
 LDFLAGS := $(CPUFLAGS) -T linker/stm32f1xx_app.ld -nostartfiles \
@@ -52,9 +58,9 @@ LDFLAGS := $(CPUFLAGS) -T linker/stm32f1xx_app.ld -nostartfiles \
 
 LIBS := -lc -lm -lnosys
 
-.PHONY: all size clean host-test assets rebuild
+.PHONY: all size clean host-test assets rebuild smoke-test
 
-all: $(BUILD)/$(TARGET).hex $(BUILD)/$(TARGET).bin size
+all: $(BUILD)/$(TARGET).hex $(BUILD)/$(TARGET).bin size smoke-test
 
 $(BUILD)/%.o: %.c Makefile | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -73,6 +79,12 @@ $(BUILD):
 
 size: $(BUILD)/$(TARGET).elf
 	@$(SIZE) $<
+
+# Layout regression guard: the rebuilt image must land where the
+# bootloader expects it (vector table at 0x08005800, code at 0x08005950,
+# identical initial SP, nothing in the shared parameter block).
+smoke-test: $(BUILD)/$(TARGET).hex
+	@python3 $(SMOKE) --original $(ORIGINAL) --built $<
 
 clean:
 	rm -rf $(BUILD)

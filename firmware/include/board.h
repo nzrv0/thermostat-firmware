@@ -42,10 +42,17 @@
  *   0x080906F8  Y2relaystatus | Cooling relay Y2 status | fn 0x0801329C
  *   0x08090708  Fanrelaystatus | Fan relay G status     | fn 0x0803EA9C
  *
- * Which physical GPIO drives each relay is [I]: the firmware only names
- * the logical relay. The assignment below is a placeholder matching the
- * common convention of grouping the outputs on one port; it must be
- * corrected from the schematic.
+ * [F] Each of those handlers reads one GPIO pin and returns it as a
+ * float, which pins the relay outputs directly:
+ *   0x08042674  GPIOA (0x40010800) bit 3  -> W1
+ *   0x080426A8  GPIOA (0x40010800) bit 1  -> W2
+ *   0x08013268  GPIOB (0x40010C00) bit 13 -> Y1
+ *   0x0801329C  GPIOA (0x40010800) bit 2  -> Y2
+ *   0x0803EA9C  GPIOB (0x40010C00) bit 14 -> Fan
+ *
+ * [F] The board-level output init at 0x0807DC5C configures exactly
+ * PA1, PA2, PA3, PB13 and PB14 as push-pull outputs and drives them
+ * high at start-up, which confirms the same five pins.
  */
 extern const gpio_t board_relay_w1;
 extern const gpio_t board_relay_w2;
@@ -53,6 +60,37 @@ extern const gpio_t board_relay_y1;
 extern const gpio_t board_relay_y2;
 extern const gpio_t board_relay_g;
 extern const gpio_t board_relay_ob;   /* O/B reversing valve */
+
+/* [I] The O/B valve is driven by the firmware but is not published in the
+ * point registry, so no handler identifies its pin. The reversing valve
+ * state lives in the system state block at 0x20002248; the output pin
+ * still needs the schematic or a runtime trace.
+ */
+
+/* ---- sensor buses --------------------------------------------------- */
+
+/* [F] The AT24C256 EEPROM is reached over a software-bit-banged I2C
+ * bus on GPIOG: SDA = PG6 (mask 0x40), SCL = PG8 (mask 0x100).
+ * Driver: 0x08042A08-0x08042C88, EEPROM API 0x08042938, pins configured
+ * at 0x08008028. No I2C peripheral is referenced anywhere in the image.
+ */
+extern const gpio_t board_i2c_sda;
+extern const gpio_t board_i2c_scl;
+
+/* [F] A second two-wire serial bus on GPIOC carries an external 16-bit
+ * measurement device: data = PC8 (mask 0x100), clock = PC9 (mask 0x200).
+ * Protocol primitives at 0x08061958-0x08061B70, used by 0x08062504.
+ */
+extern const gpio_t board_sensor_data;
+extern const gpio_t board_sensor_clock;
+
+/* [F] The MCU's ADC is at 0x40013C00 (the AT32 address; the STM32F1 ADC
+ * at 0x40012400 is not the one used). HAL-like code at 0x08066B2C-
+ * 0x08066D98, read wrapper 0x08071178, sampling 0x0806850C. It feeds the
+ * on-board NTC channels (RAM 0x200001DE/E0/E2) and the light sensor
+ * (RAM 0x20002248 + 0x278).
+ */
+#define BOARD_ADC_BASE_ADDR    0x40013C00UL
 
 /* ---- serial ports -------------------------------------------------- */
 
